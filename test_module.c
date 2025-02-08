@@ -100,7 +100,32 @@ void Reduce_test(){
 }
 
 void Scatter_test(){
+    int count, root, sdecv_count;
+    int send_std[MAX_LENGTH], send_my[MAX_LENGTH];
+    int recv_std[MAX_LENGTH], recv_my[MAX_LENGTH];
 
+    // initialization
+    unified_root_count(&count, &root);
+    sdecv_count = (count + world_size - 1) / world_size;
+    count = sdecv_count * world_size;
+
+    // begin to test
+    if (world_rank == root){
+        printf("----------- Scatter Testing -------------\n");
+        rand_init_array(send_std, count);
+        memcpy(send_my, send_std, count * sizeof(int));
+    }
+    MPI_Scatter(send_std, sdecv_count, MPI_INT, recv_std, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+    My_MPI_Scatter(send_my, sdecv_count, MPI_INT, recv_my, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+    if (cmp_array(recv_my, recv_std, sdecv_count))
+        exit_code("Scatter", root, count);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void Gather_test(){
+
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 int main(int argc, char* argv[]){
@@ -116,6 +141,8 @@ int main(int argc, char* argv[]){
     Reduce_test();
     // test Scatter
     Scatter_test();
+    // test Gather
+    Gather_test();
 
     if (world_rank == 0)
         printf("-------- ALL TEST PASSED! -----------\n");

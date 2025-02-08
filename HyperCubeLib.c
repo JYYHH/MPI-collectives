@@ -35,6 +35,8 @@
 // for simplification, the implementation will not check for the error code
 // for simplification, let's assume world_size = 2^t
 // for simplification, for reduce we only do MPI_SUM
+// for simplification, we do not implement MPI_Gatherv and MPI_Scatterv, 
+//      and assume sendcount = recvcount for MPI_Scatter and MPI_Gather
 
 int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
     int rank_, size_; //, num_recv;
@@ -43,6 +45,13 @@ int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_C
     int delta = rank_ ^ root;
     MPI_Status status;
 
+    /*
+        msg mode: (delta)
+        round 0: 0 -> 1
+        round 1: 0 -> 2, 1 -> 3
+        round 2: 0 -> 4, 1 -> 5, 2 -> 6, 3 -> 7
+        ...
+    */
     for (int i = 0; size_ > 1; size_ >>= 1, i++)
         if (delta < (1 << i)){
             // sender on round i
@@ -83,6 +92,13 @@ int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype da
     // move the initial data into local arr
     memcpy(node_tmp, sendbuf, count * sizeof(int));
 
+    /*
+        msg mode: (delta)
+        round 0: 0 <- 1, 2 <- 3, 4 <- 5, ...
+        round 1: 0 <- 2, 4 <- 6, 8 <- 10, ...
+        round 2: 0 <- 4, 8 <- 12, 16 <- 20, ...
+        ...
+    */
     for (int i = 0; size_ > 1; size_ >>= 1, i++)
         if ((delta & ((1 << (i + 1)) - 1)) == 0){
             // recver on round i
@@ -106,4 +122,62 @@ int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype da
         memcpy(recvbuf, node_tmp, count * sizeof(int));
 
     return MPI_SUCCESS;
+}
+
+int My_MPI_Scatter(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, int root, MPI_Comm comm){
+    int rank_, size_;
+    int local_buf[MAX_LENGTH];
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    int delta = rank_ ^ root, i = 0;
+    int count = recvcount * size_; // the length of total msg
+    MPI_Status status;
+
+    // move the initial data into local arr
+    if (rank_ == root)
+        memcpy(local_buf, sendbuf, sendcount * size_ * sizeof(int));
+
+    /*
+        msg mode: (delta)
+        assume size_ = 2^k
+        round 0: 0 -> 2^(k-1)
+        round 1: 0 -> 2^(k-2), 2^(k-1) -> 2^(k-1) + 2^(k-2)
+        ...
+    */
+    while((1 << i) < size_) i++;
+    for (i--; i >= 0; i--){
+        count >>= 1;
+        if ((delta & ((1 << (i + 1)) - 1)) == 0){
+            // sender
+            if (rank_ & (1 << i)){
+                // send to a lower rank group
+                MPI_Send(
+                    local_buf, count, sendtype, rank_ ^ (1 << i), 0, comm
+                );
+                memcpy(local_buf, local_buf + count, count * sizeof(int));
+            }
+            else{
+                // send to a higher rank group
+                MPI_Send(
+                    local_buf + count, count, sendtype, rank_ ^ (1 << i), 0, comm
+                );
+            }
+        }
+        else if ((delta & ((1 << i) - 1)) == 0){
+            // recver
+            MPI_Recv(
+                local_buf, count, recvtype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+        }
+    }
+
+    // copy the result into the recvbuf
+    memcpy(recvbuf, local_buf, recvcount * sizeof(int));
+    
+    return MPI_SUCCESS;
+}
+
+int My_MPI_Gather(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, int root, MPI_Comm comm){
+
 }
