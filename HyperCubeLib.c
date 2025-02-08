@@ -3,7 +3,6 @@
 // Run: mpirun -n <num_of_programs> <exe_name>
 // MPI Version: mpiexec (OpenRTE) 4.1.2
 
-// The functions below are both BLOCKING one
 // MPI_Send(
 //     void* data,
 //     int count,
@@ -38,6 +37,8 @@
 // for simplification, we do not implement MPI_Gatherv and MPI_Scatterv, 
 //      and assume sendcount = recvcount for MPI_Scatter and MPI_Gather
 
+/*  Part 1: Basic (each one has a root) */
+
 int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
     int rank_, size_; //, num_recv;
     MPI_Comm_rank(comm, &rank_);
@@ -47,12 +48,14 @@ int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_C
 
     /*
         msg mode: (delta)
-        round 0: 0 -> 1
-        round 1: 0 -> 2, 1 -> 3
-        round 2: 0 -> 4, 1 -> 5, 2 -> 6, 3 -> 7
+        assume size_ = 2^k
+        round 0: 0 -> 1                            (2 nodes involved)
+        round 1: 0 -> 2, 1 -> 3                    (4 nodes involved)
+        round 2: 0 -> 4, 1 -> 5, 2 -> 6, 3 -> 7    (8 nodes involved)
         ...
+        (last)                                     (2^k nodes involved)
     */
-    for (int i = 0; size_ > 1; size_ >>= 1, i++)
+    for (int i = 0; (1 << i) < size_; i++)
         if (delta < (1 << i)){
             // sender on round i
             MPI_Send(
@@ -94,12 +97,14 @@ int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype da
 
     /*
         msg mode: (delta)
-        round 0: 0 <- 1, 2 <- 3, 4 <- 5, ...
-        round 1: 0 <- 2, 4 <- 6, 8 <- 10, ...
-        round 2: 0 <- 4, 8 <- 12, 16 <- 20, ...
+        assume size_ = 2^k
+        round 0: 0 <- 1, 2 <- 3, 4 <- 5, ...       (2^k nodes involved)
+        round 1: 0 <- 2, 4 <- 6, 8 <- 10, ...      (2^{k-1} nodes involved)
+        round 2: 0 <- 4, 8 <- 12, 16 <- 20, ...    (2^{k-2} nodes involved)
         ...
+        (last)                                     (2 nodes involved)
     */
-    for (int i = 0; size_ > 1; size_ >>= 1, i++)
+    for (int i = 0; (1 << i) < size_; i++)
         if ((delta & ((1 << (i + 1)) - 1)) == 0){
             // recver on round i
             // printf("Recver %d on round %d, from node %d\n", rank_, i, rank_ ^ (1 << i));
@@ -140,9 +145,10 @@ int My_MPI_Scatter(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
     /*
         msg mode: (delta)
         assume size_ = 2^k
-        round 0: 0 -> 2^(k-1)
-        round 1: 0 -> 2^(k-2), 2^(k-1) -> 2^(k-1) + 2^(k-2)
+        round 0: 0 -> 2^(k-1)                                       (2 nodes involved)
+        round 1: 0 -> 2^(k-2), 2^(k-1) -> 2^(k-1) + 2^(k-2)         (4 nodes involved)
         ...
+        (last)                                                      (2^k nodes involved)
     */
     while((1 << i) < size_) i++;
     for (i--; i >= 0; i--){
@@ -179,5 +185,179 @@ int My_MPI_Scatter(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
 }
 
 int My_MPI_Gather(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, int root, MPI_Comm comm){
+    int rank_, size_;
+    int local_buf[MAX_LENGTH];
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    int delta = rank_ ^ root;
+    int count = sendcount; // the length of single msg
+    MPI_Status status;
 
+    // move the initial data into local arr
+    memcpy(local_buf, sendbuf, count * sizeof(int));
+
+    /*
+        msg mode: (delta)
+        assume size_ = 2^k
+        round 0: 0 <- 1, 2 <- 3, 4 <- 5, ...       (2^k nodes involved)
+        round 1: 0 <- 2, 4 <- 6, 8 <- 10, ...      (2^{k-1} nodes involved)
+        round 2: 0 <- 4, 8 <- 12, 16 <- 20, ...    (2^{k-2} nodes involved)
+        ...
+        (last)                                     (2 nodes involved)
+    */
+    for (int i = 0; (1 << i) < size_; i++){
+        if ((delta & ((1 << (i + 1)) - 1)) == 0){
+            // recver on round i
+            if (rank_ & (1 << i)){
+                // recv from a lower rank group
+                memcpy(local_buf + count, local_buf, sizeof(int) * count);
+                MPI_Recv(
+                    local_buf, count, recvtype, rank_ ^ (1 << i), 0, comm,
+                    &status
+                );
+            }
+            else{
+                // recv from a higher rank group
+                MPI_Recv(
+                    local_buf + count, count, recvtype, rank_ ^ (1 << i), 0, comm,
+                    &status
+                );
+            }
+        }
+        else if ((delta & ((1 << i) - 1)) == 0){
+            // sender on round i
+            MPI_Send(
+                local_buf, count, sendtype, rank_ ^ (1 << i), 0, comm
+            );
+        }
+        count <<= 1;
+    }
+    
+    // copy the result into the recvbuf
+    if (delta == 0)
+        memcpy(recvbuf, local_buf, count * sizeof(int));
+
+    return MPI_SUCCESS;
+}
+
+/*  Part 2: Advanced (no root here) */
+
+int My_MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    // ignore op, we only do MPI_SUM
+    int rank_, size_;
+    int node_tmp[MAX_LENGTH], local_recvbuf[MAX_LENGTH];
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    MPI_Status status;
+    
+    // move the initial data into local arr
+    memcpy(node_tmp, sendbuf, count * sizeof(int));
+
+    /*
+        msg mode: (delta)
+        assume size_ = 2^k
+        round 0: 0 <-> 1, 2 <-> 3, 4 <-> 5, ...       (2^k nodes involved)
+        round 1: 0 <-> 2, 1 <-> 3, 2 <-> 4, ...       (2^k nodes involved)
+        round 2: 0 <-> 4, 1 <-> 5, 2 <-> 6, ...       (2^k nodes involved)
+        ...
+        (last)                                        (2^k nodes involved)
+    */
+    for (int i = 0; (1 << i) < size_; i++)
+        if ((1 << i) & rank_){
+            // left side node
+            MPI_Send(
+                node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            arr_add(node_tmp, local_recvbuf, count);
+        }
+        else{
+            // right side node
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            MPI_Send(
+                node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+            arr_add(node_tmp, local_recvbuf, count);
+        }
+
+    
+    // copy the result into the recvbuf
+    memcpy(recvbuf, node_tmp, count * sizeof(int));
+
+    return MPI_SUCCESS;
+}
+
+int My_MPI_Scan(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    // ignore op, we only do MPI_SUM
+    int rank_, size_, i;
+    int node_tmp[MAX_LENGTH], local_recvbuf[MAX_LENGTH];
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    MPI_Status status;
+    
+    // move the initial data into local arr
+    memcpy(node_tmp, sendbuf, count * sizeof(int));
+
+    /*
+        msg mode: (delta)
+        assume size_ = 2^k
+        round 0: 0 -> 1, 2 -> 3, 4 -> 5, ...       (2^k nodes involved)
+        round 1: 1 -> 3, 5 -> 7, 9 -> 11, ...      (2^{k-1} nodes involved)
+        ...
+        round k-1: (2^{k-1}-1) -> (2^k-1)          (2 nodes involved) 
+        round k: (2^{k-1}-1) -> (2^{k-1}+2^{k-2}-1)       (2^2-2 nodes involved)
+        ...
+        (last)                                     (2^k-2 nodes involved)
+    */
+
+    // first k-1 rounds
+    for (i = 0; (1 << i) < size_; i++)
+        if (((~rank_) & ((1 << (i + 1)) - 1)) == 0){
+            // recv side
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            arr_add(node_tmp, local_recvbuf, count);
+        }
+        else if (((~rank_) & ((1 << i) - 1)) == 0){
+            // send side
+            MPI_Send(
+                node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+        }
+    // rest rounds
+    for (i -= 2; i >= 0; i--)
+        if (((~rank_) & ((1 << (i + 1)) - 1)) == 0){
+            // the only skipped one which does not need to send
+            if (rank_ == size_ - 1)
+                continue;
+            // send side
+            MPI_Send(
+                node_tmp, count, datatype, rank_ + (1 << i), 0, comm
+            );
+            
+        }
+        else if (((~rank_) & ((1 << i) - 1)) == 0){
+            // the only skipped one which does not need to recv
+            if (rank_ == ((1 << i) - 1))
+                continue;
+            // recv side
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ - (1 << i), 0, comm,
+                &status
+            );
+            arr_add(node_tmp, local_recvbuf, count);
+        }
+    
+    // copy the result into the recvbuf
+    memcpy(recvbuf, node_tmp, count * sizeof(int));
+
+    return MPI_SUCCESS;
 }

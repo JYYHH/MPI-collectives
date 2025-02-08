@@ -1,6 +1,6 @@
 // See here (https://rookiehpc.org/mpi/docs/index.html) for a better understanding about each function below
-#define MAX_LENGTH 1024
-/*  Part 1: Basic */
+#define MAX_LENGTH (4096 + 0xff)
+/*  Part 1: Basic (each one has a root) */
 // Broadcast
 int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm);
 void arr_add(int *a, int *b, int n); // vectorized add, the result is in-place for a[]
@@ -15,7 +15,7 @@ int My_MPI_Scatter(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
 int My_MPI_Gather(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
     void *recvbuf, int recvcount, MPI_Datatype recvtype, int root, MPI_Comm comm);
 
-/*  Part 2: Advanced */
+/*  Part 2: Advanced (no root here) */
 // All Reduce (All-Reduce) = Reduce + Broadcast
 int My_MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
     MPI_Datatype datatype, MPI_Op op, MPI_Comm comm);

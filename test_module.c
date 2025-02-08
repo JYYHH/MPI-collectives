@@ -89,13 +89,8 @@ void Reduce_test(){
         printf("----------- Reduce Testing -------------\n");
     MPI_Reduce(send_std, recv_std, count, MPI_INT, MPI_SUM, root, MPI_COMM_WORLD);
     My_MPI_Reduce(send_my, recv_my, count, MPI_INT, MPI_SUM, root, MPI_COMM_WORLD);
-    if (root == world_rank && cmp_array(recv_std, recv_my, count)){
-        // printf("Root = %d\n", root);
-        // for (int i = 0; i < count; i++)
-        //     printf("(%d, %d) ", recv_my[i], recv_std[i]);
-        // puts("");
+    if (root == world_rank && cmp_array(recv_std, recv_my, count))
         exit_code("Reduce", root, count);
-    }
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
@@ -124,7 +119,66 @@ void Scatter_test(){
 }
 
 void Gather_test(){
+    int count, root, sdecv_count;
+    int send_std[MAX_LENGTH], send_my[MAX_LENGTH];
+    int recv_std[MAX_LENGTH], recv_my[MAX_LENGTH];
 
+    // initialization
+    unified_root_count(&count, &root);
+    sdecv_count = (count + world_size - 1) / world_size;
+    count = sdecv_count * world_size;
+    rand_init_array(send_std, sdecv_count);
+    memcpy(send_my, send_std, sdecv_count * sizeof(int));
+
+    // begin to test
+    if (world_rank == root)
+        printf("----------- Gather Testing -------------\n");
+    MPI_Gather(send_std, sdecv_count, MPI_INT, recv_std, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+    My_MPI_Gather(send_my, sdecv_count, MPI_INT, recv_my, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+    if (root == world_rank && cmp_array(recv_my, recv_std, count))
+        exit_code("Gather", root, count);
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+// now, the root in below functions is just for printf usage...
+
+void AllReduce_test(){
+    int count, root;
+    int send_std[MAX_LENGTH], send_my[MAX_LENGTH];
+    int recv_std[MAX_LENGTH], recv_my[MAX_LENGTH];
+
+    // initialization
+    unified_root_count(&count, &root);
+    rand_init_array(send_std, count);
+    memcpy(send_my, send_std, count * sizeof(int));
+
+    // begin to test
+    if (world_rank == root)
+        printf("----------- All Reduce Testing -------------\n");
+    MPI_Allreduce(send_std, recv_std, count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    My_MPI_Allreduce(send_my, recv_my, count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if (cmp_array(recv_std, recv_my, count))
+        exit_code("All Reduce", root, count);
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void Scan_test(){
+    int count, root;
+    int send_std[MAX_LENGTH], send_my[MAX_LENGTH];
+    int recv_std[MAX_LENGTH], recv_my[MAX_LENGTH];
+
+    // initialization
+    unified_root_count(&count, &root);
+    rand_init_array(send_std, count);
+    memcpy(send_my, send_std, count * sizeof(int));
+
+    // begin to test
+    if (world_rank == root)
+        printf("----------- Scan Testing -------------\n");
+    MPI_Scan(send_std, recv_std, count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    My_MPI_Scan(send_my, recv_my, count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if (cmp_array(recv_std, recv_my, count))
+        exit_code("Scan", root, count);
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
@@ -143,6 +197,12 @@ int main(int argc, char* argv[]){
     Scatter_test();
     // test Gather
     Gather_test();
+
+    // test AllReduce
+    AllReduce_test();
+    // test Scan
+    Scan_test();
+    // test
 
     if (world_rank == 0)
         printf("-------- ALL TEST PASSED! -----------\n");
