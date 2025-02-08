@@ -46,7 +46,7 @@ void arr_add(int *a, int *b, int n){
 
 /*  Part 1: Basic (each one has a root) */
 
-int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
+int Bcast_impl_1(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
     /*
         Assume n is the number of the nodes,
                m is the amount of total msg
@@ -55,7 +55,7 @@ int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_C
         work:           n
         msg work:       nm
     */
-    int rank_, size_; //, num_recv;
+    int rank_, size_;
     MPI_Comm_rank(comm, &rank_);
     MPI_Comm_size(comm, &size_);
     int delta = rank_ ^ root;
@@ -83,17 +83,43 @@ int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_C
                 buffer, count, datatype, rank_ ^ (1 << i), 0, comm,
                 &status
             );
-            // // for incorrect read count
-            // MPI_Get_count(&status, MPI_INT, &num_recv);
-            // if (num_recv != count)
-            //     return MPI_ERR_COUNT;
         }
     
     return MPI_SUCCESS;
-    // TODO(JHY): better version
 }
 
-int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, int root, MPI_Comm comm){
+int Bcast_impl_2(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
+    /*
+        Assume n is the number of the nodes,
+               m is the amount of total msg
+        depth:          2 * log n
+        msg depth:      2 * m
+        work:           n + n log n
+        msg work:       m (n + log n)
+    */
+    int size_;
+    MPI_Comm_size(comm, &size_);
+    int sdecv_count = count / size_;
+    int buff_[sdecv_count + 5];
+
+    My_MPI_Scatter(buffer, sdecv_count, MPI_INT, buff_, sdecv_count, MPI_INT, root, comm);
+    My_MPI_Allgather(buff_, sdecv_count, MPI_INT, buffer, sdecv_count, MPI_INT, comm);
+
+    return MPI_SUCCESS;
+}
+
+int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
+    if (BROADCAST == 1)
+        return Bcast_impl_1(buffer, count, datatype, root, comm);
+    else if (BROADCAST == 2)
+        return Bcast_impl_2(buffer, count, datatype, root, comm);
+    else{
+        printf("Not Implemented Error from Broadcast!\n");
+        exit(1);
+    }
+}
+
+int Reduce_impl_1(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, int root, MPI_Comm comm){
     /*
         Assume n is the number of the nodes,
                m is the amount of total msg
@@ -125,7 +151,6 @@ int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype da
     for (int i = 0; (1 << i) < size_; i++)
         if ((delta & ((1 << (i + 1)) - 1)) == 0){
             // recver on round i
-            // printf("Recver %d on round %d, from node %d\n", rank_, i, rank_ ^ (1 << i));
             MPI_Recv(
                 local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
                 &status
@@ -134,7 +159,6 @@ int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype da
         }
         else if ((delta & ((1 << i) - 1)) == 0){
             // sender on round i
-            // printf("Sender %d on round %d, to node %d\n", rank_, i, rank_ ^ (1 << i));
             MPI_Send(
                 node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
             );
@@ -145,7 +169,37 @@ int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype da
         memcpy(recvbuf, node_tmp, count * sizeof(int));
 
     return MPI_SUCCESS;
-    // TODO(JHY): better version
+}
+
+int Reduce_impl_2(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, int root, MPI_Comm comm){
+    /*
+        Assume n is the number of the nodes,
+               m is the amount of total msg
+        depth:          2 * log n
+        msg depth:      2 * m
+        work:           n + n log n
+        msg work:       m (n + log n)
+    */
+    int size_;
+    MPI_Comm_size(comm, &size_);
+    int sdecv_count = count / size_;
+    int buff_[sdecv_count + 5];
+
+    My_MPI_Reduce_scatter(sendbuf, buff_, &sdecv_count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    My_MPI_Gather(buff_, sdecv_count, MPI_INT, recvbuf, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+
+    return MPI_SUCCESS;
+}
+
+int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, int root, MPI_Comm comm){
+    if (REDUCE == 1)
+        return Reduce_impl_1(sendbuf, recvbuf, count, datatype, op, root, comm);
+    else if (REDUCE == 2)
+        return Reduce_impl_2(sendbuf, recvbuf, count, datatype, op, root, comm);
+    else{
+        printf("Not Implemented Error from Reduce!\n");
+        exit(1);
+    }
 }
 
 int My_MPI_Scatter(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, int root, MPI_Comm comm){
@@ -277,7 +331,7 @@ int My_MPI_Gather(const void *sendbuf, int sendcount, MPI_Datatype sendtype, voi
 
 /*  Part 2: Advanced (no root here) */
 
-int My_MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+int AllReduce_impl_1(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
     /*
         Assume n is the number of the nodes,
                m is the amount of total msg
@@ -334,8 +388,39 @@ int My_MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
     memcpy(recvbuf, node_tmp, count * sizeof(int));
 
     return MPI_SUCCESS;
+}
 
-    // TODO(JHY): better version, e.g. reduce + broadcast
+int AllReduce_impl_2(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    /*
+        Assume n is the number of the nodes,
+               m is the amount of total msg
+        depth:          2 * log n
+        msg depth:      2 * m
+        work:           2 * n log n
+        msg work:       2 * mn
+    */
+    int size_;
+    MPI_Comm_size(comm, &size_);
+    int sdecv_count = count / size_;
+    int buff_[sdecv_count + 5];
+
+    // All reduce = reduce + broadcast, and using reduce2 + broadcast2, 
+    //      while the gather and scatter in the middle diminished
+    My_MPI_Reduce_scatter(sendbuf, buff_, &sdecv_count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    My_MPI_Allgather(buff_, sdecv_count, MPI_INT, recvbuf, sdecv_count, MPI_INT, comm);
+
+    return MPI_SUCCESS;
+}
+
+int My_MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    if (ALLREDUCE == 1)
+        return AllReduce_impl_1(sendbuf, recvbuf, count, datatype, op, comm);
+    else if (ALLREDUCE == 2)
+        return AllReduce_impl_2(sendbuf, recvbuf, count, datatype, op, comm);
+    else{
+        printf("Not Implemented Error from All Reduce!\n");
+        exit(1);
+    }
 }
 
 int My_MPI_Scan(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
@@ -488,7 +573,7 @@ int My_MPI_Reduce_scatter(const void *sendbuf, void *recvbuf, const int recvcoun
     int rank_, size_;
     MPI_Comm_rank(comm, &rank_);
     MPI_Comm_size(comm, &size_);
-    int count = recvcounts[rank_] * size_;
+    int count = recvcounts[0] * size_;
     MPI_Status status;
 
     // move the initial data into local arr

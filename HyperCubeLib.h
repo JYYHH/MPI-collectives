@@ -1,5 +1,10 @@
 // See here (https://rookiehpc.org/mpi/docs/index.html) for a better understanding about each function below
+// MACROs
 #define MAX_LENGTH (4096 + 0xff)
+#define BROADCAST  2 // \in{1, 2}
+#define REDUCE     2 // \in{1, 2}
+#define ALLREDUCE  2 // \in{1, 2}
+
 /*  Part 1: Basic (each one has a root) */
 // Broadcast
 int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm);

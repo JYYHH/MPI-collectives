@@ -219,7 +219,7 @@ void ReduceScatter_test(){
     MPI_Reduce_scatter(send_std, recv_std, sdecv_count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     My_MPI_Reduce_scatter(send_my, recv_my, sdecv_count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-    if (cmp_array(recv_my, recv_std, count))
+    if (cmp_array(recv_my, recv_std, sdecv_count[world_rank]))
         exit_code("Reduce Scatter", root, count);
     MPI_Barrier(MPI_COMM_WORLD);
 }
@@ -248,7 +248,6 @@ int main(int argc, char* argv[]){
     AllGather_test();
     // test Reduce Scatter
     ReduceScatter_test();
-
 
     if (world_rank == 0)
         printf("-------- ALL TEST PASSED! -----------\n");
