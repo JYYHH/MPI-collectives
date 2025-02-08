@@ -3,7 +3,6 @@
 /*  Part 1: Basic (each one has a root) */
 // Broadcast
 int My_MPI_Bcast(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm);
-void arr_add(int *a, int *b, int n); // vectorized add, the result is in-place for a[]
 // Reduce
 int My_MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
     MPI_Op op, int root, MPI_Comm comm);
