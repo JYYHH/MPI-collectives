@@ -34,8 +34,6 @@ int My_MPI_Allgather(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
 int My_MPI_Reduce_scatter(const void *sendbuf, void *recvbuf, const int recvcounts[],
     MPI_Datatype datatype, MPI_Op op, MPI_Comm comm);
 
-// All-to-All (All-to-All Personalized Communication / Matrix Transpose)
+// All-to-All (All-to-All Personalized Communication / Matrix Transpose (if recvcount == sendcount == 1) )
 int My_MPI_Alltoall(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
     void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm);
-
-

@@ -359,7 +359,7 @@ int AllReduce_impl_1(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
         ...
         (last)                                        (2^k nodes involved)
     */
-    for (int i = 0; (1 << i) < size_; i++)
+    for (int i = 0; (1 << i) < size_; i++){
         if ((1 << i) & rank_){
             // right side node
             MPI_Send(
@@ -369,7 +369,6 @@ int AllReduce_impl_1(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
                 local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
                 &status
             );
-            arr_add(node_tmp, local_recvbuf, count);
         }
         else{
             // left side node
@@ -380,8 +379,9 @@ int AllReduce_impl_1(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
             MPI_Send(
                 node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
             );
-            arr_add(node_tmp, local_recvbuf, count);
         }
+        arr_add(node_tmp, local_recvbuf, count);
+    }
 
     
     // copy the result into the recvbuf
@@ -582,8 +582,8 @@ int My_MPI_Reduce_scatter(const void *sendbuf, void *recvbuf, const int recvcoun
     /*
         msg mode: (absolute)
         assume size_ = 2^k
-        round 0: 0 <-> 2^k, 1 <-> 2^k + 1,          ...       (2^k nodes involved)
-        round 1: 0 <-> 2^{k-1}, 1 <-> 2^{k-1},      ...       (2^k nodes involved)
+        round 0: 0 <-> 2^{k-1}, 1 <-> 2^{k-1} + 1,  ...       (2^k nodes involved)
+        round 1: 0 <-> 2^{k-2}, 1 <-> 2^{k-2} + 1,  ...       (2^k nodes involved)
         ...
         (last)                                                (2^k nodes involved)
     */
@@ -601,8 +601,6 @@ int My_MPI_Reduce_scatter(const void *sendbuf, void *recvbuf, const int recvcoun
                 local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
                 &status
             );
-            arr_add(node_tmp, local_recvbuf, count);
-            
         }
         else{
             // left side node
@@ -613,12 +611,118 @@ int My_MPI_Reduce_scatter(const void *sendbuf, void *recvbuf, const int recvcoun
             MPI_Send(
                 node_tmp + count, count, datatype, rank_ ^ (1 << i), 0, comm
             );
-            arr_add(node_tmp, local_recvbuf, count);
         }
+        arr_add(node_tmp, local_recvbuf, count);
     }
     
     // copy the result into the recvbuf
     memcpy(recvbuf, node_tmp, count * sizeof(int));
+
+    return MPI_SUCCESS;
+}
+
+void comb_arr(int *dst, int *src, int len_, int stride){
+    if (stride > 4){
+        for (int i = 0; i < len_; i += stride){;
+            memcpy(dst + (i << 1), src + i, stride * sizeof(int));
+            memcpy(dst + (i << 1) + stride, src + i + len_, stride * sizeof(int));
+        }
+    }
+    else if (stride == 1){
+        for (int i = 0; i < len_; i++){
+            dst[i << 1] = src[i];
+            dst[(i << 1) | 1] = src[i + len_];
+        }
+    }
+    else if (stride == 2){
+        for (int i = 0; i < len_; i += 2){
+            dst[(i << 1)] = src[i];
+            dst[(i << 1) + 1] = src[i + 1];
+            dst[(i << 1) + 2] = src[i + len_];
+            dst[(i << 1) + 3] = src[i + len_ + 1];
+        }
+    }
+    else if (stride == 3){
+        for (int i = 0; i < len_; i += 3){
+            dst[(i << 1)] = src[i];
+            dst[(i << 1) + 1] = src[i + 1];
+            dst[(i << 1) + 2] = src[i + 2];
+            dst[(i << 1) + 3] = src[i + len_];
+            dst[(i << 1) + 4] = src[i + len_ + 1];
+            dst[(i << 1) + 5] = src[i + len_ + 2];
+        }
+    }
+    else if (stride == 4){
+        for (int i = 0; i < len_; i += 4){
+            dst[(i << 1)] = src[i];
+            dst[(i << 1) + 1] = src[i + 1];
+            dst[(i << 1) + 2] = src[i + 2];
+            dst[(i << 1) + 3] = src[i + 3];
+            dst[(i << 1) + 4] = src[i + len_];
+            dst[(i << 1) + 5] = src[i + len_ + 1];
+            dst[(i << 1) + 6] = src[i + len_ + 2];
+            dst[(i << 1) + 7] = src[i + len_ + 3];
+        }
+    }
+}
+
+int My_MPI_Alltoall(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm){
+    /*
+        Assume n is the number of the nodes,
+               m is the amount of total msg
+        depth:          log n
+        msg depth:      m log n
+        work:           n log n
+        msg work:       mn log n
+    */
+    int node_tmp[MAX_LENGTH], local_recvbuf[MAX_LENGTH];
+    int rank_, size_;
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    int count = (sendcount * size_) >> 1;
+    MPI_Status status;
+
+    // move the initial data into local arr
+    memcpy(node_tmp, sendbuf, count * 2 * sizeof(int));
+
+    /*
+        msg mode: (absolute)
+        assume size_ = 2^k
+        round 0: 0 <-> 2^{k-1}, 1 <-> 2^{k-1} + 1,  ...       (2^k nodes involved)
+        round 1: 0 <-> 2^{k-2}, 1 <-> 2^{k-2} + 1,  ...       (2^k nodes involved)
+        ...
+        (last)                                                (2^k nodes involved)
+    */
+    int i = 0;
+    while((1 << i) < size_) i++;
+    for (i-- ; i >= 0; i--){
+        if ((1 << i) & rank_){
+            // right side node
+            MPI_Send(
+                node_tmp, count, sendtype, rank_ ^ (1 << i), 0, comm
+            );
+            memcpy(local_recvbuf + count, node_tmp + count, count * sizeof(int));
+            MPI_Recv(
+                local_recvbuf, count, recvtype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+        }
+        else{
+            // left side node
+            MPI_Recv(
+                local_recvbuf + count, count, recvtype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            memcpy(local_recvbuf, node_tmp, count * sizeof(int));
+            MPI_Send(
+                node_tmp + count, count, sendtype, rank_ ^ (1 << i), 0, comm
+            );
+        }
+        comb_arr(node_tmp, local_recvbuf, count, sendcount);
+    }
+    
+    // copy the result into the recvbuf
+    memcpy(recvbuf, node_tmp, count * 2 * sizeof(int));
 
     return MPI_SUCCESS;
 }
