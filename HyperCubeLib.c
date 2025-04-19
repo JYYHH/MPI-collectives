@@ -424,6 +424,17 @@ int My_MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
 }
 
 int My_MPI_Scan(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    if (SCAN == 1)
+        return Scan_impl_1(sendbuf, recvbuf, count, datatype, op, comm);
+    else if (SCAN == 2)
+        return Scan_impl_2(sendbuf, recvbuf, count, datatype, op, comm);
+    else{
+        printf("Not Implemented Error from Scan!\n");
+        exit(1);
+    }
+}
+
+int Scan_impl_1(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
     /*
         Assume n is the number of the nodes,
                m is the amount of total msg
@@ -447,6 +458,7 @@ int My_MPI_Scan(const void *sendbuf, void *recvbuf, int count, MPI_Datatype data
         assume size_ = 2^k
         round 0: 0 -> 1, 2 -> 3, 4 -> 5, ...        (2^k nodes involved)
         round 1: 1 -> 3, 5 -> 7, 9 -> 11, ...       (2^{k-1} nodes involved)
+        round 2: 3 -> 7, 11 -> 15, 19 -> 23, ...    (2^{k-2} nodes involved)
         ...
         round k-1: (2^{k-1}-1) -> (2^k-1)           (2 nodes involved) 
         round k: (2^{k-1}-1) -> (2^{k-1}+2^{k-2}-1) (2^2-2 nodes involved)
@@ -496,6 +508,70 @@ int My_MPI_Scan(const void *sendbuf, void *recvbuf, int count, MPI_Datatype data
     
     // copy the result into the recvbuf
     memcpy(recvbuf, node_tmp, count * sizeof(int));
+
+    return MPI_SUCCESS;
+}
+
+int Scan_impl_2(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    /*
+        Assume n is the number of the nodes,
+               m is the amount of total msg
+        depth:          log n
+        msg depth:      m log n
+        work:           n log n
+        msg work:       nm log n
+    */
+    // ignore op, we only do MPI_SUM
+    int rank_, size_, i;
+    int node_tmp[MAX_LENGTH], local_recvbuf[MAX_LENGTH];
+    int ret_[MAX_LENGTH];
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    MPI_Status status;
+    
+    // move the initial data into local arr
+    memcpy(node_tmp, sendbuf, count * sizeof(int));
+    // move the initial data into the return result array
+    memcpy(ret_, sendbuf, count * sizeof(int));
+
+    /*
+        msg mode: (absolute)
+        assume size_ = 2^k
+        round 0: 0 <-> 1, 2 <-> 3, 4 <-> 5, ...        (2^k nodes involved)
+        round 1: 0 <-> 2, 1 <-> 3, 4 <-> 6, ...        (2^k nodes involved)
+        ...
+        round k-1: 0 <-> 2^{k-1}, ...                  (2^k nodes involved) 
+    */
+
+    // first k-1 rounds
+    for (i = 0; (1 << i) < size_; i++){
+        if ((1 << i) & rank_){
+            // right side node
+            MPI_Send(
+                node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            // only for the right side node, we will add the sum from another node into the prefix-sum
+            arr_add(ret_, local_recvbuf, count);
+        }
+        else{
+            // left side node
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            MPI_Send(
+                node_tmp, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+        }
+        arr_add(node_tmp, local_recvbuf, count);
+    }
+    
+    // copy the result into the recvbuf
+    memcpy(recvbuf, ret_, count * sizeof(int));
 
     return MPI_SUCCESS;
 }

@@ -4,6 +4,7 @@
 #define BROADCAST  2 // \in{1, 2}
 #define REDUCE     2 // \in{1, 2}
 #define ALLREDUCE  2 // \in{1, 2}
+#define SCAN       2 // \in{1, 2}
 
 /*  Part 1: Basic (each one has a root) */
 // Broadcast
