@@ -44,6 +44,18 @@ void arr_add(int *a, int *b, int n){
         a[i] += b[i];
 }
 
+void arr_mul_add_mod(int *a, int *b, int *c, int n){
+    // the result is in-place for a[]
+    for (int i = 0; i < n; i++)
+        a[i] = (a[i] + b[i] * (ll)c[i]) % my_mod;
+}
+
+void arr_mul_mod(int *a, int *b, int n){
+    // the result is in-place for a[]
+    for (int i = 0; i < n; i++)
+        a[i] = (a[i] * (ll)b[i]) % my_mod;
+}
+
 /*  Part 1: Basic (each one has a root) */
 
 int Bcast_impl_1(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm){
@@ -572,6 +584,125 @@ int Scan_impl_2(const void *sendbuf, void *recvbuf, int count, MPI_Datatype data
     
     // copy the result into the recvbuf
     memcpy(recvbuf, ret_, count * sizeof(int));
+
+    return MPI_SUCCESS;
+}
+
+int My_MPI_WeightedScan(const void *sendaddbuf, const void *sendmulbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm){
+    /*
+        Assume n is the number of the nodes,
+               m is the amount of total msg
+        depth:          2 * 2 * log n              <double send-recv pair, same for the rest below>
+        msg depth:      2 * 2 * m log n
+        work:           2 * 2 * n
+        msg work:       2 * 2 * nm
+    */
+    // ignore op, we only do MPI_SUM
+    int rank_, size_, i;
+    int local_sum[MAX_LENGTH], local_recvbuf[MAX_LENGTH];
+    int local_mul[MAX_LENGTH];
+    MPI_Comm_rank(comm, &rank_);
+    MPI_Comm_size(comm, &size_);
+    MPI_Status status;
+    
+    // move the initial data into local arr
+    memcpy(local_sum, sendaddbuf, count * sizeof(int));
+    memcpy(local_mul, sendmulbuf, count * sizeof(int));
+
+    /*
+        msg mode: (absolute)
+        assume size_ = 2^k
+        round 0: 0 -> 1, 2 -> 3, 4 -> 5, ...        (2^k nodes involved)
+        round 1: 1 -> 3, 5 -> 7, 9 -> 11, ...       (2^{k-1} nodes involved)
+        round 2: 3 -> 7, 11 -> 15, 19 -> 23, ...    (2^{k-2} nodes involved)
+        ...
+        round k-1: (2^{k-1}-1) -> (2^k-1)           (2 nodes involved) 
+        round k: (2^{k-1}-1) -> (2^{k-1}+2^{k-2}-1) (2^2-2 nodes involved)
+        ...
+        (last)                                      (2^k-2 nodes involved)
+    */
+
+    // first k-1 rounds
+    for (i = 0; (1 << i) < size_; i++)
+        if (((~rank_) & ((1 << (i + 1)) - 1)) == 0){
+            // first recv the sum
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            arr_mul_add_mod(
+                local_sum,
+                local_recvbuf,
+                local_mul,
+                count
+            );
+            // then is the mul
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ ^ (1 << i), 0, comm,
+                &status
+            );
+            arr_mul_mod(
+                local_mul,
+                local_recvbuf,
+                count
+            );
+        }
+        else if (((~rank_) & ((1 << i) - 1)) == 0){
+            // send side
+                // first is the sum
+            MPI_Send(
+                local_sum, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+                // second is the mul
+            MPI_Send(
+                local_mul, count, datatype, rank_ ^ (1 << i), 0, comm
+            );
+        }
+    // rest rounds
+    for (i -= 2; i >= 0; i--)
+        if (((~rank_) & ((1 << (i + 1)) - 1)) == 0){
+            // the only skipped one which does not need to send
+            if (rank_ == size_ - 1)
+                continue;
+            // send side
+                // first is the sum
+            MPI_Send(
+                local_sum, count, datatype, rank_ + (1 << i), 0, comm
+            );
+                // second is the mul
+            MPI_Send(
+                local_mul, count, datatype, rank_ + (1 << i), 0, comm
+            );
+        }
+        else if (((~rank_) & ((1 << i) - 1)) == 0){
+            // the only skipped one which does not need to recv
+            if (rank_ == ((1 << i) - 1))
+                continue;
+            // first recv the sum
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ - (1 << i), 0, comm,
+                &status
+            );
+            arr_mul_add_mod(
+                local_sum,
+                local_recvbuf,
+                local_mul,
+                count
+            );
+            // then is the mul
+            MPI_Recv(
+                local_recvbuf, count, datatype, rank_ - (1 << i), 0, comm,
+                &status
+            );
+            arr_mul_mod(
+                local_mul,
+                local_recvbuf,
+                count
+            );
+        }
+    
+    // copy the result into the recvbuf
+    memcpy(recvbuf, local_sum, count * sizeof(int));
 
     return MPI_SUCCESS;
 }

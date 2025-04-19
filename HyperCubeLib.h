@@ -4,7 +4,9 @@
 #define BROADCAST  2 // \in{1, 2}
 #define REDUCE     2 // \in{1, 2}
 #define ALLREDUCE  2 // \in{1, 2}
-#define SCAN       2 // \in{1, 2}
+#define SCAN       1 // \in{1, 2}
+#define ll long long
+#define my_mod (1000000007)
 
 /*  Part 1: Basic (each one has a root) */
 // Broadcast

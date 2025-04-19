@@ -12,7 +12,7 @@ int world_rank, world_size;
 
 void rand_init_array(int *a, int n){
     for (int i = 0; i < n; i++)
-        a[i] = rand();
+        a[i] = rand() + 1; // to void zero for multiplication
 }
 
 void rand_init_matrix(int **a, int n, int m){
@@ -245,6 +245,46 @@ void AllToAll_test(){
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
+void WeightedScan_test(){
+    int count, root, sdecv_count;
+    int send_add[MAX_LENGTH], send_mul[MAX_LENGTH];
+    int recv_add[MAX_LENGTH], recv_mul[MAX_LENGTH];
+    int scan_rsl[MAX_LENGTH], scan_rsl_root[MAX_LENGTH];
+
+    // initialization
+    unified_root_count(&count, &root);
+    sdecv_count = count / world_size;
+
+    // begin to test
+    if (world_rank == root){
+        printf("----------- Weighted Scan Testing -------------\n");
+        rand_init_array(send_add, count);
+        rand_init_array(send_mul, count);
+    }
+    // distribute the add and mul
+    MPI_Scatter(send_add, sdecv_count, MPI_INT, recv_add, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+    MPI_Scatter(send_mul, sdecv_count, MPI_INT, recv_mul, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+
+    // do the scan
+    My_MPI_WeightedScan(recv_add, recv_mul, scan_rsl, sdecv_count, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+    // do the check
+    MPI_Gather(scan_rsl, sdecv_count, MPI_INT, scan_rsl_root, sdecv_count, MPI_INT, root, MPI_COMM_WORLD);
+    if (world_rank == root){
+        bool pass = true;
+        for (int i = 0; i < count; i++){
+            if (i >= sdecv_count)
+                send_add[i] = (send_add[i - sdecv_count] * (ll)send_mul[i] + send_add[i]) % my_mod;
+            if (send_add[i] != scan_rsl_root[i]){
+                printf("Mismatch at position %d, std = %d, but our get %d\n", i, send_add[i], scan_rsl_root[i]);
+                exit_code("Weighted Scan", root, count);
+            }
+        }
+    }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
 int main(int argc, char* argv[]){
     MPI_Init(&argc, &argv); 
     srand(time(NULL));
@@ -271,9 +311,11 @@ int main(int argc, char* argv[]){
     ReduceScatter_test();
     // test ALL to ALL
     AllToAll_test();
+    // test Weighted Scan
+    WeightedScan_test();
 
     if (world_rank == 0)
-        printf("-------- ALL TEST PASSED! -----------\n");
+        printf("----------- ALL TEST PASSED! -----------\n");
     MPI_Finalize();
     return 0;
 }
